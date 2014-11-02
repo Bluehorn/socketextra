@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages, Extension
 from codecs import open
 from os import path
 
@@ -37,6 +37,7 @@ setup(
     packages=find_packages(exclude=['contrib', 'docs', 'tests*']),
 
     install_requires=[],
-    extras_require = {},
+    extras_require={},
+    ext_modules=[Extension('socketextra._socketextra', ["socketextra/_socketextra.c"])],
 )
 
