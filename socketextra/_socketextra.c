@@ -1,6 +1,8 @@
 #include <Python.h>
 #include <sys/socket.h>
 
+static int extract_fd(PyObject *socket);
+
 static PyObject *
 socketextra_CMSG_LEN(PyObject *self, PyObject *args)
 {
@@ -33,11 +35,16 @@ static PyObject *
 socketextra_sendmsg(PyObject *self, PyObject *args)
 {
     PyObject *socket = NULL, *buffers = NULL, *ancdata = NULL;
-    int flags;
+    int flags = 0;
     PyObject *address = NULL;
+    int sockfd = -1;
 
     if (!PyArg_ParseTuple(args, "OO|OiO:sendmsg",
                           &socket, &buffers, &ancdata, &flags, &address))
+        return NULL;
+
+    sockfd = extract_fd(socket);
+    if (sockfd == -1)
         return NULL;
 
     return PyErr_Format(PyExc_NotImplementedError, "sendmsg");
@@ -48,14 +55,36 @@ socketextra_recvmsg(PyObject *self, PyObject *args)
 {
     PyObject *socket = NULL;
     Py_ssize_t bufsize = 0, ancbufsize = 0;
-    int flags;
+    int flags = 0, sockfd = -1;
 
     if (!PyArg_ParseTuple(args, "On|ni:recvmsg", &bufsize, &ancbufsize, &flags))
+        return NULL;
+
+    sockfd = extract_fd(socket);
+    if (sockfd == -1)
         return NULL;
 
     return PyErr_Format(PyExc_NotImplementedError, "recvmsg");
 }
 
+
+/* Return socket.fileno as int. On error, return -1 and set Python error */
+static int extract_fd(PyObject *socket)
+{
+    long fileno_c;
+    PyObject *fileno = PyObject_CallMethod(socket, "fileno", NULL);
+
+    if (!fileno)
+        return -1;
+    fileno_c = PyInt_AsLong(fileno);
+    if (fileno_c == -1 && PyErr_Occurred())
+        return -1;
+    if (fileno_c < INT_MIN || fileno_c > INT_MAX) {
+        PyErr_Format(PyExc_OverflowError, "socket.fileno() returned non-integer %ld", fileno_c);
+        return -1;
+    }
+    return fileno_c;
+}
 
 static PyMethodDef socketextra_methods[] = {
     {"CMSG_LEN",          socketextra_CMSG_LEN, METH_VARARGS, NULL},
