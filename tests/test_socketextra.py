@@ -33,6 +33,17 @@ def test_sendmsg_scather_gather():
     assert receiver.recv(400) == "vec1vec2vec3"
 
 
+def test_recvmsg_data_only():
+    """recvmsg without ancbuffer should work like recv."""
+    sender, receiver = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    sender.send("hello world")
+    reply = socketextra.recvmsg(receiver, 1000)
+    assert len(reply) == 4 and isinstance(reply, tuple)
+    assert reply[0] == "hello world"
+    assert reply[1] == []
+    assert reply[3] is None
+
+
 def test_sendmsg_non_buffer():
     """buffers must be a list of buffer objects, check error checking."""
     sender, receiver = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)

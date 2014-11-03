@@ -86,18 +86,51 @@ finally:
 static PyObject *
 socketextra_recvmsg(PyObject *self, PyObject *args)
 {
-    PyObject *socket = NULL;
+    PyObject *socket = NULL, *result = NULL, *data_buffer = NULL;
     Py_ssize_t bufsize = 0, ancbufsize = 0;
+    ssize_t bytes_received = -1;
     int flags = 0, sockfd = -1;
+    struct msghdr msghdr = {0};
+    struct iovec iovec = {0};
 
     if (!PyArg_ParseTuple(args, "On|ni:recvmsg", &socket, &bufsize, &ancbufsize, &flags))
         return NULL;
 
     sockfd = extract_fd(socket);
     if (sockfd == -1)
-        return NULL;
+        goto finally;
 
-    return PyErr_Format(PyExc_NotImplementedError, "recvmsg");
+    if (bufsize < 0) {
+        PyErr_SetString(PyExc_ValueError, "negative buffer size in recvmsg()");
+        goto finally;
+    }
+
+    data_buffer = PyString_FromStringAndSize(NULL, bufsize);
+    if (!data_buffer)
+        goto finally;
+
+    msghdr.msg_iov = &iovec;
+    msghdr.msg_iovlen = 1;
+    iovec.iov_base = PyString_AS_STRING(data_buffer);
+    iovec.iov_len = bufsize;
+    bytes_received = recvmsg(sockfd, &msghdr, flags);
+
+    if (bytes_received == -1) {
+        PyErr_SetFromErrno(PyExc_OSError);
+    } else {
+        if (_PyString_Resize(&data_buffer, bytes_received) == 0) {
+            /* success */
+            result = Py_BuildValue("ONiO",
+                    data_buffer,
+                    PyList_New(0),
+                    (int) msghdr.msg_flags,
+                    Py_None);
+        }
+    }
+
+finally:
+    Py_XDECREF(data_buffer);
+    return result;
 }
 
 
