@@ -12,6 +12,7 @@ static int buffers_to_iovec(PyObject *buffers, struct msghdr *msghdr, Py_buffer 
 static void free_iovec(struct msghdr *msghdr, Py_buffer **buffer_views_ref);
 static int ancdata_to_cmsg(PyObject *ancdata, struct msghdr *msghdr);
 static void free_cmsg(struct msghdr *msghdr, struct cmsg_tuple **cmsg_array_ref);
+static PyObject *ancillary_data_list(struct msghdr *msghdr);
 
 static PyObject *
 socketextra_CMSG_LEN(PyObject *self, PyObject *args)
@@ -88,6 +89,7 @@ socketextra_recvmsg(PyObject *self, PyObject *args)
 {
     PyObject *socket = NULL, *result = NULL, *data_buffer = NULL;
     Py_ssize_t bufsize = 0, ancbufsize = 0;
+    void *ancbuffer = NULL;
     ssize_t bytes_received = -1;
     int flags = 0, sockfd = -1;
     struct msghdr msghdr = {0};
@@ -104,6 +106,10 @@ socketextra_recvmsg(PyObject *self, PyObject *args)
         PyErr_SetString(PyExc_ValueError, "negative buffer size in recvmsg()");
         goto finally;
     }
+    if (ancbufsize < 0) {
+        PyErr_SetString(PyExc_ValueError, "negative ancillary buffer size in recvmsg()");
+        goto finally;
+    }
 
     data_buffer = PyString_FromStringAndSize(NULL, bufsize);
     if (!data_buffer)
@@ -113,6 +119,17 @@ socketextra_recvmsg(PyObject *self, PyObject *args)
     msghdr.msg_iovlen = 1;
     iovec.iov_base = PyString_AS_STRING(data_buffer);
     iovec.iov_len = bufsize;
+
+    if (ancbufsize > 0) {
+        ancbuffer = PyMem_Malloc(ancbufsize);
+        if (!ancbuffer) {
+            PyErr_NoMemory();
+            goto finally;
+        }
+        msghdr.msg_control = ancbuffer;
+        msghdr.msg_controllen = ancbufsize;
+    }
+
     bytes_received = recvmsg(sockfd, &msghdr, flags);
 
     if (bytes_received == -1) {
@@ -122,7 +139,7 @@ socketextra_recvmsg(PyObject *self, PyObject *args)
             /* success */
             result = Py_BuildValue("ONiO",
                     data_buffer,
-                    PyList_New(0),
+                    ancillary_data_list(&msghdr),
                     (int) msghdr.msg_flags,
                     Py_None);
         }
@@ -130,6 +147,7 @@ socketextra_recvmsg(PyObject *self, PyObject *args)
 
 finally:
     Py_XDECREF(data_buffer);
+    PyMem_Free(ancbuffer);
     return result;
 }
 
@@ -290,6 +308,41 @@ finally:
 
 static void free_cmsg(struct msghdr *msghdr, struct cmsg_tuple **cmsg_array_ref)
 {
+}
+
+
+static PyObject *ancillary_data_list(struct msghdr *msghdr)
+{
+    Py_ssize_t overhead = CMSG_DATA((struct cmsghdr*) NULL) - (unsigned char *)NULL;
+    PyObject *result = PyList_New(0);
+    if (!result)
+        goto bail;
+
+    if (msghdr->msg_controllen > 0) {
+        struct cmsghdr *cmsg;
+        for (cmsg = CMSG_FIRSTHDR(msghdr);
+                cmsg; cmsg = CMSG_NXTHDR(msghdr, cmsg))
+        {
+            int rc;
+            PyObject *entry = Py_BuildValue("iiN",
+                    (int) cmsg->cmsg_level,
+                    (int) cmsg->cmsg_type,
+                    PyString_FromStringAndSize((char*) CMSG_DATA(cmsg), cmsg->cmsg_len - overhead));
+            if (!entry)
+                goto bail;
+
+            rc = PyList_Append(result, entry);
+            Py_DECREF(entry);
+            if (rc)
+                goto bail;
+        }
+    }
+
+    return result;
+
+bail:
+    Py_XDECREF(result);
+    return NULL;
 }
 
 

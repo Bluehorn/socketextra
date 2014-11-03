@@ -76,5 +76,9 @@ def test_send_recv_rights():
     (data, ancdata, msg_flags, address) = socketextra.recvmsg(receiver, 128, 1024, 0)
     assert data == ""
     assert ancdata
-    # write into received pipe end
-    # read from pipe_read and get result
+    assert ancdata[0][:2] == (socket.SOL_SOCKET, socketextra.SCM_RIGHTS)
+    received_fds = array.array("i")
+    received_fds.fromstring(ancdata[0][2])
+    pipe_write_received, = received_fds
+    os.write(pipe_write_received, "hello world")
+    assert os.read(pipe_read, 1000) == "hello world"
