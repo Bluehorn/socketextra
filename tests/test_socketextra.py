@@ -1,8 +1,12 @@
 # coding: utf-8
 
 import pytest
+
+import os
+import array
 import socket
 import sysconfig
+
 import socketextra
 
 @pytest.mark.skipif("sysconfig.get_config_var('SIZEOF_INT') == sysconfig.get_config_var('SIZEOF_LONG')")
@@ -38,3 +42,28 @@ def test_sendmsg_non_buffer():
         socketextra.sendmsg(sender, ["a string", 42])
     with pytest.raises(TypeError):
         socketextra.sendmsg(sender, "string is bad")
+
+
+def test_sendmsg_bad_ancdata():
+    """ancdata must be a list of tuples."""
+    sender, receiver = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    with pytest.raises(TypeError):
+        socketextra.sendmsg(sender, [], "string is not allowed")
+    with pytest.raises(TypeError):
+        socketextra.sendmsg(sender, [], ["list must have tuples"])
+    with pytest.raises(TypeError):
+        socketextra.sendmsg(sender, [], [(0, 0, 42)])
+    with pytest.raises(TypeError):
+        socketextra.sendmsg(sender, [], [(0, 0)])
+
+def test_send_recv_rights():
+    """Tests sending open files as SCM_RIGHTS ancillary data."""
+    sender, receiver = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    pipe_read, pipe_write = os.pipe()
+    fds = [pipe_write]
+    socketextra.sendmsg(sender, [], [(socket.SOL_SOCKET, socketextra.SCM_RIGHTS, array.array("i", fds))])
+    (data, ancdata, msg_flags, address) = socketextra.recvmsg(receiver, 128, 1024, 0)
+    assert data == ""
+    assert ancdata
+    # write into received pipe end
+    # read from pipe_read and get result

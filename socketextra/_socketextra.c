@@ -1,9 +1,17 @@
 #include <Python.h>
 #include <sys/socket.h>
 
+struct cmsg_tuple {
+    int level;
+    int type;
+    Py_buffer data;
+};
+
 static int extract_fd(PyObject *socket);
 static int buffers_to_iovec(PyObject *buffers, struct msghdr *msghdr, Py_buffer **buffer_views_ref);
 static void free_iovec(struct msghdr *msghdr, Py_buffer **buffer_views_ref);
+static int ancdata_to_cmsg(PyObject *ancdata, struct msghdr *msghdr);
+static void free_cmsg(struct msghdr *msghdr, struct cmsg_tuple **cmsg_array_ref);
 
 static PyObject *
 socketextra_CMSG_LEN(PyObject *self, PyObject *args)
@@ -60,6 +68,8 @@ socketextra_sendmsg(PyObject *self, PyObject *args)
 
     if (!buffers_to_iovec(buffers, &msghdr, &buffer_views))
         goto finally;
+    if (!ancdata_to_cmsg(ancdata, &msghdr))
+        goto finally;
 
     sendmsg_retval = sendmsg(sockfd, &msghdr, flags);
     if (sendmsg_retval == -1) {
@@ -80,7 +90,7 @@ socketextra_recvmsg(PyObject *self, PyObject *args)
     Py_ssize_t bufsize = 0, ancbufsize = 0;
     int flags = 0, sockfd = -1;
 
-    if (!PyArg_ParseTuple(args, "On|ni:recvmsg", &bufsize, &ancbufsize, &flags))
+    if (!PyArg_ParseTuple(args, "On|ni:recvmsg", &socket, &bufsize, &ancbufsize, &flags))
         return NULL;
 
     sockfd = extract_fd(socket);
@@ -125,7 +135,7 @@ static int buffers_to_iovec(PyObject *buffers, struct msghdr *msghdr, Py_buffer 
         PyErr_Format(PyExc_TypeError, "sendmsg: buffers must not be a string/unicode object");
         goto finally;
     }
-    buffer_seq = PySequence_Fast(buffers, "sendmsg: buffers must be an interable of buffers");
+    buffer_seq = PySequence_Fast(buffers, "sendmsg: buffers must be an iterable of buffers");
     if (!buffer_seq)
         return 0;
 
@@ -180,6 +190,76 @@ static void free_iovec(struct msghdr *msghdr, Py_buffer **buffer_views_ref)
 }
 
 
+static int ancdata_to_cmsg(PyObject *ancdata, struct msghdr *msghdr)
+{
+    int success = 0;
+    PyObject *cmsg_seq = NULL;
+    Py_ssize_t cmsg_count = 0, i;
+    size_t controllen = 0;
+    struct cmsghdr *cmsg = NULL;
+    struct cmsg_tuple *cmsg_array = NULL;
+
+    /* Nothing to do if ancdata is None or was not passed. */
+    if (!ancdata || ancdata == Py_None)
+        return 1;
+
+    if (PyString_Check(ancdata) || PyUnicode_Check(ancdata)) {
+        PyErr_Format(PyExc_TypeError, "sendmsg: ancdata must be an iterable of tuples");
+        return 0;
+    }
+
+    cmsg_seq = PySequence_Fast(ancdata, "sendmsg: ancdata must be an iterable of tuples");
+    if (!cmsg_seq)
+        return 0;
+
+    cmsg_count = PySequence_Fast_GET_SIZE(cmsg_seq);
+    cmsg_array = PyMem_New(struct cmsg_tuple, cmsg_count);
+    if (!cmsg_array) {
+        PyErr_NoMemory();
+        goto finally;
+    }
+    memset(cmsg_array, 0, sizeof(struct cmsg_tuple) * cmsg_count);
+
+    for (i = 0; i < cmsg_count; i++) {
+        if (!PyArg_Parse(PySequence_Fast_GET_ITEM(cmsg_seq, i),
+                         "(iis*):[sendmsg(): ancillary data item]",
+                         &cmsg_array[i].level,
+                         &cmsg_array[i].type,
+                         &cmsg_array[i].data))
+            goto finally;
+        controllen += CMSG_SPACE(cmsg_array[i].data.len);
+    }
+
+    msghdr->msg_control = PyMem_Malloc(controllen);
+    if (!msghdr->msg_control) {
+        PyErr_NoMemory();
+        goto finally;
+    }
+    msghdr->msg_controllen = controllen;
+
+    cmsg = NULL;
+    for (i = 0; i < cmsg_count; i++) {
+        cmsg = cmsg ? CMSG_NXTHDR(msghdr, cmsg) : CMSG_FIRSTHDR(msghdr);
+        assert(cmsg);
+        cmsg->cmsg_type = cmsg_array[i].type;
+        cmsg->cmsg_level = cmsg_array[i].level;
+        cmsg->cmsg_len = CMSG_LEN(cmsg_array[i].data.len);
+        memcpy(CMSG_DATA(cmsg), cmsg_array[i].data.buf, cmsg_array[i].data.len);
+    }
+
+    success = 1;
+
+finally:
+    Py_CLEAR(cmsg_seq);
+    return success;
+}
+
+
+static void free_cmsg(struct msghdr *msghdr, struct cmsg_tuple **cmsg_array_ref)
+{
+}
+
+
 static PyMethodDef socketextra_methods[] = {
     {"CMSG_LEN",          socketextra_CMSG_LEN, METH_VARARGS, NULL},
     {"CMSG_SPACE",        socketextra_CMSG_SPACE, METH_VARARGS, NULL},
@@ -192,5 +272,10 @@ static PyMethodDef socketextra_methods[] = {
 PyMODINIT_FUNC
 init_socketextra(void)
 {
-    Py_InitModule("socketextra._socketextra", socketextra_methods);
+    PyObject *mod = Py_InitModule("socketextra._socketextra", socketextra_methods);
+    if (!mod)
+        return;
+
+    if (!PyModule_AddIntMacro(mod, SCM_RIGHTS))
+        return;
 }
