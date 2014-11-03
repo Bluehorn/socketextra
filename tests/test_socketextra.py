@@ -82,3 +82,22 @@ def test_send_recv_rights():
     pipe_write_received, = received_fds
     os.write(pipe_write_received, "hello world")
     assert os.read(pipe_read, 1000) == "hello world"
+
+def test_scatter_gather_ancillary():
+    """Tests sending multiple files via SCM_RIGHTS."""
+    sender, receiver = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    fds = []
+    for x in range(3):
+        fds.extend(os.pipe())
+    socketextra.sendmsg(sender,
+        ["this is ", "an elaborate", " request"],
+        [(socket.SOL_SOCKET, socketextra.SCM_RIGHTS, array.array("i", fds[:1])),
+         (socket.SOL_SOCKET, socketextra.SCM_RIGHTS, array.array("i", fds[1:4])),
+         (socket.SOL_SOCKET, socketextra.SCM_RIGHTS, array.array("i", fds[4:]))])
+    (data, ancdata, msg_flags, address) = socketextra.recvmsg(receiver, 128, 1024, 0)
+    assert data == "this is an elaborate request"
+    received = array.array("i")
+    for entry in ancdata:
+        if entry[:2] == (socket.SOL_SOCKET, socketextra.SCM_RIGHTS):
+            received.fromstring(entry[2])
+    assert len(received) == len(fds)

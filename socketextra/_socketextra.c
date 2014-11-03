@@ -287,6 +287,7 @@ static int ancdata_to_cmsg(PyObject *ancdata, struct msghdr *msghdr)
         goto finally;
     }
     msghdr->msg_controllen = controllen;
+    memset(msghdr->msg_control, 0, controllen);
 
     cmsg = NULL;
     for (i = 0; i < cmsg_count; i++) {
