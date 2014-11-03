@@ -40,4 +40,3 @@ setup(
     extras_require={},
     ext_modules=[Extension('socketextra._socketextra', ["socketextra/_socketextra.c"])],
 )
-
