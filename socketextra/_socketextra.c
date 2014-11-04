@@ -130,7 +130,9 @@ socketextra_recvmsg(PyObject *self, PyObject *args)
         msghdr.msg_controllen = ancbufsize;
     }
 
+    Py_BEGIN_ALLOW_THREADS;
     bytes_received = recvmsg(sockfd, &msghdr, flags);
+    Py_END_ALLOW_THREADS;
 
     if (bytes_received == -1) {
         PyErr_SetFromErrno(PyExc_OSError);

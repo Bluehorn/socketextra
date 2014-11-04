@@ -4,6 +4,6 @@ python:
   - "2.7"
 install:
   - "pip install ."
-  - "pip install pytest"
+  - "pip install pytest pytest-timeout"
 # command to run tests
 script: py.test -rsx -v

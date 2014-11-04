@@ -3,8 +3,10 @@
 import pytest
 
 import os
+import time
 import array
 import socket
+import threading
 try:
     import sysconfig
 except ImportError:
@@ -88,6 +90,7 @@ def test_send_recv_rights():
     os.write(pipe_write_received, "hello world")
     assert os.read(pipe_read, 1000) == "hello world"
 
+
 def test_scatter_gather_ancillary():
     """Tests sending multiple files via SCM_RIGHTS."""
     sender, receiver = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
@@ -106,3 +109,20 @@ def test_scatter_gather_ancillary():
         if entry[:2] == (socket.SOL_SOCKET, socketextra.SCM_RIGHTS):
             received.fromstring(entry[2])
     assert len(received) == len(fds)
+
+
+@pytest.mark.timeout(2)
+def test_gil_unlocked_recvmsg():
+    """The GIL should be released while recvmsg() is running."""
+    sender, receiver = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    @thread
+    def background():
+        time.sleep(0.01)
+        sender.send("hi there")
+    background.start()
+    socketextra.recvmsg(receiver, 100)
+    background.join()
+
+
+def thread(fn):
+    return threading.Thread(target=fn)
