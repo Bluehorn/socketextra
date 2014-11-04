@@ -5,7 +5,12 @@ import pytest
 import os
 import array
 import socket
-import sysconfig
+try:
+    import sysconfig
+except ImportError:
+    # sysconfig is new in Python 2.7 but seems to be available from distutils
+    # in 2.6 at least.
+    from distutils import sysconfig
 
 import socketextra
 
