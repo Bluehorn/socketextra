@@ -124,5 +124,25 @@ def test_gil_unlocked_recvmsg():
     background.join()
 
 
+@pytest.mark.timeout(2)
+def test_gil_unlocked_sendmsg():
+    """The GIL should be released while sendmsg() is running."""
+    # Idea: The sender starts first and fills the buffer. The receiver starts
+    # later and drains the buffer again, unless the sender blocks the receiver
+    # from running.
+    chunk = "x" * 1024
+    sender, receiver = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    @thread
+    def background():
+        time.sleep(0.05)
+        while receiver.recv(len(chunk)):
+            pass
+    background.start()
+    for x in range(1000):
+        socketextra.sendmsg(sender, [chunk]*16)
+    sender.close()
+    background.join()
+
+
 def thread(fn):
     return threading.Thread(target=fn)

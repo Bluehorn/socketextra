@@ -72,7 +72,9 @@ socketextra_sendmsg(PyObject *self, PyObject *args)
     if (!ancdata_to_cmsg(ancdata, &msghdr))
         goto finally;
 
+    Py_BEGIN_ALLOW_THREADS;
     sendmsg_retval = sendmsg(sockfd, &msghdr, flags);
+    Py_END_ALLOW_THREADS;
     if (sendmsg_retval == -1) {
         PyErr_SetFromErrno(PyExc_OSError);
         goto finally;
