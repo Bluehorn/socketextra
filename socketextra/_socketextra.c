@@ -10,7 +10,7 @@ struct cmsg_tuple {
 static int extract_fd(PyObject *socket);
 static int buffers_to_iovec(PyObject *buffers, struct msghdr *msghdr, Py_buffer **buffer_views_ref);
 static void free_iovec(struct msghdr *msghdr, Py_buffer **buffer_views_ref);
-static int ancdata_to_cmsg(PyObject *ancdata, struct msghdr *msghdr);
+static int ancdata_to_cmsg(PyObject *ancdata, struct msghdr *msghdr, struct cmsg_tuple **cmsg_array_ref);
 static void free_cmsg(struct msghdr *msghdr, struct cmsg_tuple **cmsg_array_ref);
 static PyObject *ancillary_data_list(struct msghdr *msghdr);
 
@@ -52,6 +52,7 @@ socketextra_sendmsg(PyObject *self, PyObject *args)
     PyObject *result = NULL;
     int sockfd = -1;
     struct msghdr msghdr = {0};
+    struct cmsg_tuple *cmsg_array = NULL;
     ssize_t sendmsg_retval = -1;
 
     if (!PyArg_ParseTuple(args, "OO|OiO:sendmsg",
@@ -69,7 +70,7 @@ socketextra_sendmsg(PyObject *self, PyObject *args)
 
     if (!buffers_to_iovec(buffers, &msghdr, &buffer_views))
         goto finally;
-    if (!ancdata_to_cmsg(ancdata, &msghdr))
+    if (!ancdata_to_cmsg(ancdata, &msghdr, &cmsg_array))
         goto finally;
 
     Py_BEGIN_ALLOW_THREADS;
@@ -83,6 +84,7 @@ socketextra_sendmsg(PyObject *self, PyObject *args)
 
 finally:
     free_iovec(&msghdr, &buffer_views);
+    free_cmsg(&msghdr, &cmsg_array);
     return result;
 }
 
@@ -249,7 +251,7 @@ static void free_iovec(struct msghdr *msghdr, Py_buffer **buffer_views_ref)
 }
 
 
-static int ancdata_to_cmsg(PyObject *ancdata, struct msghdr *msghdr)
+static int ancdata_to_cmsg(PyObject *ancdata, struct msghdr *msghdr, struct cmsg_tuple **cmsg_array_ref)
 {
     int success = 0;
     PyObject *cmsg_seq = NULL;
@@ -278,6 +280,7 @@ static int ancdata_to_cmsg(PyObject *ancdata, struct msghdr *msghdr)
         goto finally;
     }
     memset(cmsg_array, 0, sizeof(struct cmsg_tuple) * cmsg_count);
+    *cmsg_array_ref = cmsg_array;
 
     for (i = 0; i < cmsg_count; i++) {
         if (!PyArg_Parse(PySequence_Fast_GET_ITEM(cmsg_seq, i),
@@ -317,6 +320,17 @@ finally:
 
 static void free_cmsg(struct msghdr *msghdr, struct cmsg_tuple **cmsg_array_ref)
 {
+    if (msghdr->msg_control) {
+        struct cmsghdr *cmsg = CMSG_FIRSTHDR(msghdr);
+        struct cmsg_tuple *current = *cmsg_array_ref;
+        for (; current && cmsg; current += 1, cmsg = CMSG_NXTHDR(msghdr, cmsg)) {
+            PyBuffer_Release(&current->data);
+            PyMem_Free(*cmsg_array_ref);
+            *cmsg_array_ref = NULL;
+        }
+        PyMem_Free(msghdr->msg_control);
+        msghdr->msg_control = NULL;
+    }
 }
 
 
