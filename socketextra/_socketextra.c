@@ -197,11 +197,15 @@ static int buffers_to_iovec(PyObject *buffers, struct msghdr *msghdr, Py_buffer 
     buffer_count = PySequence_Fast_GET_SIZE(buffer_seq);
     msghdr->msg_iovlen = buffer_count;
     msghdr->msg_iov = PyMem_New(struct iovec, buffer_count);
-    if (!msghdr->msg_iov)
+    if (!msghdr->msg_iov) {
+        PyErr_NoMemory();
         goto finally;
+    }
     py_buffers = PyMem_New(Py_buffer, buffer_count);
-    if (!py_buffers)
+    if (!py_buffers) {
+        PyErr_NoMemory();
         goto finally;
+    }
     memset(py_buffers, 0, sizeof(Py_buffer) * buffer_count);
     *buffer_views_ref = py_buffers;
 
