@@ -124,6 +124,47 @@ def test_gil_unlocked_recvmsg():
     background.join()
 
 
+@pytest.mark.timeout(5)
+def test_too_many_files():
+    """
+    Hitting the open file limit via recvmsg leads to truncationi of ancillary data.
+    The caller has to check the flags for the MSG_CTRUNC flag.
+    """
+    sender, receiver = socket.socketpair(socket.AF_UNIX, socket.SOCK_DGRAM)
+    pid = os.fork()
+    if pid == 0:
+        # Child process
+        receiver.close()
+        pipe_read, pipe_write = os.pipe()
+        try:
+            while True:
+                fds = [pipe_write]
+                socketextra.sendmsg(sender, [], [(socket.SOL_SOCKET, socketextra.SCM_RIGHTS, array.array("i", fds))])
+        except BaseException as e:
+            os._exit(1)
+        finally:
+            os._exit(0)
+
+    # Parent process
+    sender.close()
+    received_fds = []
+    try:
+        while True:
+            (data, ancdata, msg_flags, address) = socketextra.recvmsg(receiver, 128, 1024, 0)
+            if msg_flags & socket.MSG_CTRUNC:
+                # Limit for open files reached as expected, shut down
+                break
+            assert ancdata[0][:2] == (socket.SOL_SOCKET, socketextra.SCM_RIGHTS)
+            buf = array.array("i")
+            buf.fromstring(ancdata[0][2])
+            received_fds.extend(buf)
+    finally:
+        for fd in received_fds:
+            os.close(fd)
+        receiver.close()
+        os.waitpid(pid, 0)
+
+
 @pytest.mark.timeout(2)
 def test_gil_unlocked_sendmsg():
     """The GIL should be released while sendmsg() is running."""
